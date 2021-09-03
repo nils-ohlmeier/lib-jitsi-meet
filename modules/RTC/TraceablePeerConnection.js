@@ -300,7 +300,7 @@ export default function TraceablePeerConnection(
 
     // override as desired
     this.trace = (what, info) => {
-        logger.debug(what, info);
+        logger.error(what, info);
 
         this.updateLog.push({
             time: new Date(),
@@ -517,6 +517,11 @@ TraceablePeerConnection.prototype._getReceiversByEndpointIds = function(endpoint
  */
 TraceablePeerConnection.prototype.isSimulcastOn = function() {
     return !this.options.disableSimulcast;
+};
+
+TraceablePeerConnection.prototype.useEndpointMids = function() {
+    // TODO turn this into an config option
+    return true;
 };
 
 /**
@@ -2444,6 +2449,75 @@ TraceablePeerConnection.prototype.setMaxBitRate = function() {
     return videoSender.setParameters(parameters);
 };
 
+TraceablePeerConnection.prototype._rewriteMidToEndpointIds = function(desc) {
+    if (typeof desc !== 'object' || desc === null
+        || typeof desc.sdp !== 'string') {
+        logger.warn('An empty description was passed as an argument');
+
+        return desc;
+    }
+
+    let midUpdates = new Map();
+
+    const session = transform.parse(desc.sdp);
+
+    if (typeof session !== 'undefined'
+            && typeof session.media !== 'undefined'
+            && Array.isArray(session.media)) {
+        let myEndpointId = this.localTracks.values().next().value.getParticipantId();
+        session.media.forEach(mLine => {
+            let oldMid = mLine.mid;
+            if (!isNaN(oldMid)) {
+                for (const ssrc of mLine.ssrcs) {
+                    let newMid = "";
+                    let remoteEndpointId = this.signalingLayer.getSSRCOwner(ssrc.id);
+                    if (remoteEndpointId) {
+                        newMid = remoteEndpointId;
+                    } else if (ssrc.attribute === "cname" &&
+                              ssrc.value === "mixed") {
+                        // This is an ugly workaround as there doesn't appear to be
+                        // any knowledge of local tracks when setting the initial 
+                        // remote description
+                        newMid = myEndpointId;
+                    }
+                    if (newMid.length > 0) {
+                        if (mLine.type === "audio") {
+                            newMid += "-a";
+                        } else if (mLine.type === "video") {
+                            newMid += "-v";
+                        }
+                        console.log('!!!!!!!!!!!!!!!! Replacing old MID ' + oldMid + ' with endpointID ' + newMid + '"!!!!!!!!!!!!');
+                        mLine.mid = newMid;
+                        midUpdates.set(oldMid, newMid);
+                        break;
+                    }
+                }
+            }
+        });
+
+        if (midUpdates.size > 0) {
+            let firstGroup = session.groups[0];
+            // TODO do we need support for more then just one group attribute?
+            if (firstGroup.type === "BUNDLE") {
+                let oldMids = firstGroup.mids.split(' ');
+                for (const mid of midUpdates.keys()) {
+                  console.log('replacing ' + mid + ' with ' + midUpdates.get(mid));
+                  oldMids[oldMids.indexOf(mid.toString())] = midUpdates.get(mid);
+                }
+                let newMids = oldMids.join(' ');
+                console.log('~~~~~~~~~~~~~~~~~~~~~~ new BUNDLE group: ' + newMids);
+                session.groups[0].mids = newMids;
+            }
+        }
+    }
+
+
+    return new RTCSessionDescription({
+        type: desc.type,
+        sdp: transform.write(session)
+    });
+};
+
 TraceablePeerConnection.prototype.setRemoteDescription = function(description) {
     this.trace('setRemoteDescription::preTransform', dumpSDP(description));
 
@@ -2474,6 +2548,13 @@ TraceablePeerConnection.prototype.setRemoteDescription = function(description) {
             'setRemoteDescription::postTransform (Unified)',
             dumpSDP(description));
 
+        if (this.useEndpointMids()) {
+            // eslint-disable-next-line no-param-reassign
+            description = this._rewriteMidToEndpointIds(description);
+            this.trace(
+		'setRemoteDescription::postMidRewrite',
+	        dumpSDP(description));
+        }
         if (this.isSimulcastOn()) {
             // eslint-disable-next-line no-param-reassign
             description = this.simulcast.mungeRemoteDescription(description);
