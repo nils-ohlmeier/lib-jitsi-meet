@@ -521,7 +521,7 @@ TraceablePeerConnection.prototype.isSimulcastOn = function() {
 
 TraceablePeerConnection.prototype.useEndpointMids = function() {
     // TODO turn this into an config option
-    return false;
+    return true;
 };
 
 /**
@@ -2562,8 +2562,8 @@ TraceablePeerConnection.prototype.setRemoteDescription = function(description) {
             // eslint-disable-next-line no-param-reassign
             description = this._rewriteMidToEndpointIds(description);
             this.trace(
-		'setRemoteDescription::postMidRewrite',
-	        dumpSDP(description));
+                'setRemoteDescription::postMidRewrite',
+                dumpSDP(description));
         }
         if (this.isSimulcastOn()) {
             // eslint-disable-next-line no-param-reassign
