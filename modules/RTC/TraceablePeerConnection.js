@@ -521,7 +521,7 @@ TraceablePeerConnection.prototype.isSimulcastOn = function() {
 
 TraceablePeerConnection.prototype.useEndpointMids = function() {
     // TODO turn this into an config option
-    return true;
+    return false;
 };
 
 /**
@@ -2457,16 +2457,24 @@ TraceablePeerConnection.prototype._rewriteMidToEndpointIds = function(desc) {
         return desc;
     }
 
-    let midUpdates = new Map();
-
     const session = transform.parse(desc.sdp);
 
     if (typeof session !== 'undefined'
             && typeof session.media !== 'undefined'
             && Array.isArray(session.media)) {
+        let midUpdates = new Map();
         let myEndpointId = this.localTracks.values().next().value.getParticipantId();
+        // TODO do we need support for more then just one group attribute?
+        let firstGroup = session.groups[0];
+        let bundleMids = [];
+        if (firstGroup.type === "BUNDLE") {
+            bundleMids = firstGroup.mids.split(' ');
+        }
+
         session.media.forEach(mLine => {
             let oldMid = mLine.mid;
+            let direction = mLine.direction;
+            console.log('??????????????????????????????? direction: ' + direction + ' type: ' + typeof direction);
             if (!isNaN(oldMid)) {
                 for (const ssrc of mLine.ssrcs) {
                     let newMid = "";
@@ -2486,6 +2494,13 @@ TraceablePeerConnection.prototype._rewriteMidToEndpointIds = function(desc) {
                         } else if (mLine.type === "video") {
                             newMid += "-v";
                         }
+                        let streamIndex = 0;
+                        let tempMid = newMid + streamIndex;
+                        while (bundleMids.includes(tempMid)) {
+                            streamIndex++;
+                            tempMid = newMid + streamIndex;
+                        }
+                        newMid = newMid + streamIndex;
                         console.log('!!!!!!!!!!!!!!!! Replacing old MID ' + oldMid + ' with endpointID ' + newMid + '"!!!!!!!!!!!!');
                         mLine.mid = newMid;
                         midUpdates.set(oldMid, newMid);
@@ -2496,18 +2511,13 @@ TraceablePeerConnection.prototype._rewriteMidToEndpointIds = function(desc) {
         });
 
         if (midUpdates.size > 0) {
-            let firstGroup = session.groups[0];
-            // TODO do we need support for more then just one group attribute?
-            if (firstGroup.type === "BUNDLE") {
-                let oldMids = firstGroup.mids.split(' ');
-                for (const mid of midUpdates.keys()) {
-                  console.log('replacing ' + mid + ' with ' + midUpdates.get(mid));
-                  oldMids[oldMids.indexOf(mid.toString())] = midUpdates.get(mid);
-                }
-                let newMids = oldMids.join(' ');
-                console.log('~~~~~~~~~~~~~~~~~~~~~~ new BUNDLE group: ' + newMids);
-                session.groups[0].mids = newMids;
+            for (const mid of midUpdates.keys()) {
+              console.log('replacing ' + mid + ' with ' + midUpdates.get(mid));
+              bundleMids[bundleMids.indexOf(mid.toString())] = midUpdates.get(mid);
             }
+            let newMids = bundleMids.join(' ');
+            console.log('~~~~~~~~~~~~~~~~~~~~~~ new BUNDLE group: ' + newMids);
+            session.groups[0].mids = newMids;
         }
     }
 
